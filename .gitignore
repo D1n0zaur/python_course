@@ -1,2 +1,26 @@
-app/.venv/
-app/__pycache__/
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+
+# Virtual Environment
+venv/
+env/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Database
+*.sqlite
+*.db
+
+# Environment variables
+.env
+.env.local

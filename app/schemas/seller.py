@@ -2,7 +2,7 @@ from pydantic import BaseModel
 
 class SellerBase(BaseModel):
     name: str
-    commision_percent: float
+    commission_percent: float
 
 class SellerCreate(SellerBase):
     pass
@@ -10,4 +10,5 @@ class SellerCreate(SellerBase):
 class SellerRead(SellerBase):
     id: int
 
-    orm_mode = True
+    class Config:
+        from_attributes = True
