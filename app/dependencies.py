@@ -15,9 +15,36 @@ async def get_current_user(
     
     if user_id is None:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
+            status_code=401,
             detail="Невалидный или истекший токен",
             headers={"WWW-Authenticate": "Bearer"},
         )
     
     return user_id
+
+async def get_current_admin(
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+) -> dict:
+    """
+    Зависимость для проверки, что пользователь - админ
+    """
+    token = credentials.credentials
+    payload = jwt_manager.verify_token(token)
+    
+    if not payload:
+        raise HTTPException(
+            status_code=401,
+            detail="Невалидный токен"
+        )
+    
+    if not payload.get("is_admin"):
+        raise HTTPException(
+            status_code=403,
+            detail="Требуются права администратора"
+        )
+    
+    return {
+        "user_id": int(payload.get("sub")),
+        "username": payload.get("username"),
+        "is_admin": True
+    }

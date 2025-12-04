@@ -16,16 +16,10 @@ class TokenData(BaseModel):
     username: Optional[str] = None
 
 class LoginRequest(BaseModel):
-    """
-    Схема для запроса на вход
-    """
     email: EmailStr
     password: str
 
 class RegisterRequest(BaseModel):
-    """
-    Схема для запроса на регистрацию
-    """
     username: str
     email: EmailStr
     password: str

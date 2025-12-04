@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from contextlib import asynccontextmanager
 
-from app.database import get_session, create_tables
+from app.database import get_session, create_tables, AsyncSessionLocal
 from app.models import User, Product, Seller
 from app.schemas import UserCreate, UserRead, ProductCreate, ProductRead, SellerCreate, SellerRead
 from app.security import get_password_hash, verify_password
@@ -20,121 +20,37 @@ load_dotenv()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await create_tables()
+    
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(User).where(User.is_admin == True))
+        admin_exists = result.scalar_one_or_none()
+        
+        if not admin_exists:
+            result = await session.execute(select(User).where(User.email == "admin@example.com"))
+            user_exists = result.scalar_one_or_none()
+            
+            if not user_exists:
+                admin_user = User(
+                    username="admin",
+                    email="admin@example.com",
+                    hashed_password=get_password_hash("admin123"),
+                    is_admin=True
+                )
+                session.add(admin_user)
+                await session.commit()
+                
+                print("\n" + "="*60)
+                print("СОЗДАН АДМИНИСТРАТОР ПО УМОЛЧАНИЮ")
+                print("="*60)
+            else:
+                user_exists.is_admin = True
+                session.add(user_exists)
+                await session.commit()
+                print("Существующий пользователь назначен администратором")
+    
     yield
 
 app = FastAPI(lifespan=lifespan)
-
-@app.get("/", response_class=HTMLResponse)
-async def home_page():
-    html_content = """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Marketplace - Главная</title>
-        <style>
-            body {
-                font-family: Arial, sans-serif;
-                max-width: 800px;
-                margin: 0 auto;
-                padding: 20px;
-                background-color: #f5f5f5;
-            }
-            .header {
-                text-align: center;
-                margin-bottom: 40px;
-                background-color: #4CAF50;
-                color: white;
-                padding: 30px;
-                border-radius: 10px;
-            }
-            .nav-cards {
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-                gap: 20px;
-            }
-            .card {
-                background-color: white;
-                padding: 30px;
-                border-radius: 10px;
-                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-                text-align: center;
-                transition: transform 0.3s;
-            }
-            .card:hover {
-                transform: translateY(-5px);
-            }
-            .card h3 {
-                color: #333;
-                margin-bottom: 15px;
-            }
-            .card p {
-                color: #666;
-                margin-bottom: 20px;
-            }
-            .card button {
-                background-color: #4CAF50;
-                color: white;
-                border: none;
-                padding: 10px 20px;
-                border-radius: 5px;
-                cursor: pointer;
-                font-size: 16px;
-            }
-            .card button:hover {
-                background-color: #45a049;
-            }
-            .api-info {
-                margin-top: 40px;
-                background-color: white;
-                padding: 20px;
-                border-radius: 10px;
-            }
-        </style>
-    </head>
-    <body>
-        <div class="header">
-            <h1>🛒 Marketplace API</h1>
-            <p>Платформа для продавцов и покупателей</p>
-        </div>
-        
-        <div class="nav-cards">
-            <div class="card">
-                <h3>🔐 Регистрация</h3>
-                <p>Создайте новый аккаунт для доступа ко всем функциям маркетплейса</p>
-                <button onclick="window.location.href='/register-page'">Зарегистрироваться</button>
-            </div>
-            
-            <div class="card">
-                <h3>🚪 Вход</h3>
-                <p>Войдите в свой аккаунт, чтобы управлять товарами и заказами</p>
-                <button onclick="window.location.href='/login-page'">Войти</button>
-            </div>
-            
-            <div class="card">
-                <h3>👤 Личный кабинет</h3>
-                <p>Просмотр и управление вашим профилем и токеном доступа</p>
-                <button onclick="window.location.href='/me-page'">Перейти</button>
-            </div>
-            
-            <div class="card">
-                <h3>📦 Товары</h3>
-                <p>Просмотр каталога товаров и создание новых объявлений</p>
-                <button onclick="window.location.href='/products'">Смотреть товары</button>
-            </div>
-        </div>
-        
-        <div class="api-info">
-            <h3>📚 API Документация</h3>
-            <p>Полная документация API доступна по ссылкам:</p>
-            <ul>
-                <li><a href="/docs" target="_blank">Swagger UI документация</a></li>
-                <li><a href="/redoc" target="_blank">ReDoc документация</a></li>
-            </ul>
-        </div>
-    </body>
-    </html>
-    """
-    return HTMLResponse(content=html_content)
 
 @app.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
 async def register(
@@ -162,7 +78,8 @@ async def register(
     db_user = User(
         username=user_data.username,
         email=user_data.email,
-        hashed_password=get_password_hash(user_data.password)
+        hashed_password=get_password_hash(user_data.password),
+        is_admin=False  # ← ВСЕГДА False при обычной регистрации
     )
     
     db.add(db_user)
@@ -193,7 +110,11 @@ async def login(
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    token_data = {"sub": str(user.id), "username": user.username}
+    token_data = {
+        "sub": str(user.id),
+        "username": user.username,
+        "is_admin": user.is_admin
+    }
     access_token = jwt_manager.create_access_token(data=token_data)
     
     return {
@@ -217,103 +138,75 @@ async def get_current_user_info(
     
     return user
 
+@app.get("/", response_class=HTMLResponse)
+async def home_page():
+    html_content = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Marketplace</title>
+        <style>
+            body { font-family: Arial; margin: auto; padding: 20px; max-width: 800px; }
+            h1 { text-align: center; }
+            .menu { margin: 20px 0; }
+            .menu a { 
+                display: inline-block; 
+                padding: 10px; 
+                background: #4CAF50; 
+                color: white; 
+                text-decoration: none; 
+                margin: 5px;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>Marketplace API</h1>
+        <div class="menu">
+            <a href="/register-page">Регистрация</a>
+            <a href="/login-page">Вход</a>
+            <a href="/me-page">Личный кабинет</a>
+            <a href="/docs" target="_blank">Документация API</a>
+        </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html_content)
+
 @app.get("/login-page", response_class=HTMLResponse)
 async def login_page():
     html_content = """
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Вход в Marketplace</title>
+        <title>Вход</title>
         <style>
-            body {
-                font-family: Arial, sans-serif;
-                max-width: 400px;
-                margin: 50px auto;
-                padding: 20px;
-                background-color: #f5f5f5;
+            body { font-family: Arial; margin: auto; padding: 20px; max-width: 400px; }
+            form { margin: 20px 0; }
+            input, button { 
+                width: 100%; 
+                padding: 8px; 
+                margin: 5px 0; 
             }
-            .form-container {
-                background-color: white;
-                padding: 30px;
-                border-radius: 10px;
-                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            }
-            h2 {
-                color: #333;
-                text-align: center;
-                margin-bottom: 30px;
-            }
-            .form-group {
-                margin-bottom: 20px;
-            }
-            label {
-                display: block;
-                margin-bottom: 5px;
-                color: #555;
-                font-weight: bold;
-            }
-            input {
-                width: 100%;
-                padding: 10px;
-                border: 1px solid #ddd;
-                border-radius: 5px;
-                font-size: 16px;
-            }
-            button {
-                width: 100%;
-                padding: 12px;
-                background-color: #4CAF50;
-                color: white;
-                border: none;
-                border-radius: 5px;
-                font-size: 16px;
-                cursor: pointer;
-            }
-            button:hover {
-                background-color: #45a049;
-            }
-            .message {
-                padding: 10px;
-                border-radius: 5px;
-                margin-top: 20px;
-                text-align: center;
-            }
-            .success {
-                background-color: #d4edda;
-                color: #155724;
-            }
-            .error {
-                background-color: #f8d7da;
-                color: #721c24;
-            }
-            .link {
-                text-align: center;
-                margin-top: 20px;
-            }
-            .link a {
-                color: #4CAF50;
-                text-decoration: none;
-            }
+            button { background: #4CAF50; color: white; border: none; }
+            .message { margin: 10px 0; padding: 10px; }
+            .success { background: #d4edda; color: #155724; }
+            .error { background: #f8d7da; color: #721c24; }
+            .link { margin-top: 10px; }
         </style>
     </head>
     <body>
-        <div class="form-container">
-            <h2>Вход в систему</h2>
-            <form id="loginForm">
-                <div class="form-group">
-                    <label for="email">Email:</label>
-                    <input type="email" id="email" name="email" required>
-                </div>
-                <div class="form-group">
-                    <label for="password">Пароль:</label>
-                    <input type="password" id="password" name="password" required>
-                </div>
-                <button type="submit">Войти</button>
-            </form>
-            <div id="message"></div>
-            <div class="link">
-                <a href="/register-page">Нет аккаунта? Зарегистрируйтесь</a>
-            </div>
+        <h2>Вход</h2>
+        <form id="loginForm">
+            <input type="email" id="email" placeholder="Email" required>
+            <input type="password" id="password" placeholder="Пароль" required>
+            <button type="submit">Войти</button>
+            <h1>Для входа как админ:</h1>
+            <h3>Логин: admin@example.com</h3>
+            <h3>Пароль: admin123</h3>
+        </form>
+        <div id="message"></div>
+        <div class="link">
+            <a href="/register-page">Нет аккаунта? Зарегистрируйтесь</a>
         </div>
         
         <script>
@@ -325,13 +218,8 @@ async def login_page():
                 
                 const response = await fetch('/login', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        email: email,
-                        password: password
-                    })
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({email: email, password: password})
                 });
                 
                 const resultDiv = document.getElementById('message');
@@ -353,19 +241,9 @@ async def login_page():
                 if (token) {
                     const resultDiv = document.getElementById('message');
                     resultDiv.className = 'message success';
-                    resultDiv.innerHTML = `
-                        Вы уже вошли в систему!<br>
-                        <a href="/me-page">Перейти в личный кабинет</a>
-                        <br>
-                        <button onclick="logout()">Выйти</button>
-                    `;
+                    resultDiv.innerHTML = 'Вы уже вошли в систему!<br><a href="/me-page">Личный кабинет</a>';
                 }
             });
-            
-            function logout() {
-                localStorage.removeItem('marketplace_token');
-                window.location.reload();
-            }
         </script>
     </body>
     </html>
@@ -378,108 +256,36 @@ async def register_page():
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Регистрация в Marketplace</title>
+        <title>Регистрация</title>
         <style>
-            body {
-                font-family: Arial, sans-serif;
-                max-width: 400px;
-                margin: 50px auto;
-                padding: 20px;
-                background-color: #f5f5f5;
+            body { font-family: Arial; margin: auto; padding: 20px; max-width: 400px; }
+            form { margin: 20px 0; }
+            input, button { 
+                width: 100%; 
+                padding: 8px; 
+                margin: 5px 0; 
             }
-            .form-container {
-                background-color: white;
-                padding: 30px;
-                border-radius: 10px;
-                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            }
-            h2 {
-                color: #333;
-                text-align: center;
-                margin-bottom: 30px;
-            }
-            .form-group {
-                margin-bottom: 20px;
-            }
-            label {
-                display: block;
-                margin-bottom: 5px;
-                color: #555;
-                font-weight: bold;
-            }
-            input {
-                width: 100%;
-                padding: 10px;
-                border: 1px solid #ddd;
-                border-radius: 5px;
-                font-size: 16px;
-            }
-            button {
-                width: 100%;
-                padding: 12px;
-                background-color: #4CAF50;
-                color: white;
-                border: none;
-                border-radius: 5px;
-                font-size: 16px;
-                cursor: pointer;
-            }
-            button:hover {
-                background-color: #45a049;
-            }
-            .message {
-                padding: 10px;
-                border-radius: 5px;
-                margin-top: 20px;
-                text-align: center;
-            }
-            .success {
-                background-color: #d4edda;
-                color: #155724;
-            }
-            .error {
-                background-color: #f8d7da;
-                color: #721c24;
-            }
-            .link {
-                text-align: center;
-                margin-top: 20px;
-            }
-            .link a {
-                color: #4CAF50;
-                text-decoration: none;
-            }
-            .requirements {
-                font-size: 12px;
-                color: #666;
-                margin-top: 5px;
-            }
+            button { background: #4CAF50; color: white; border: none; }
+            .message { margin: 10px 0; padding: 10px; }
+            .success { background: #d4edda; color: #155724; }
+            .error { background: #f8d7da; color: #721c24; }
+            .link { margin-top: 10px; }
+            .small { font-size: 12px; color: #666; }
         </style>
     </head>
     <body>
-        <div class="form-container">
-            <h2>Регистрация</h2>
-            <form id="registerForm">
-                <div class="form-group">
-                    <label for="username">Имя пользователя:</label>
-                    <input type="text" id="username" name="username" required>
-                    <div class="requirements">Минимум 3 символа, только буквы, цифры и подчеркивание</div>
-                </div>
-                <div class="form-group">
-                    <label for="email">Email:</label>
-                    <input type="email" id="email" name="email" required>
-                </div>
-                <div class="form-group">
-                    <label for="password">Пароль:</label>
-                    <input type="password" id="password" name="password" required>
-                    <div class="requirements">Минимум 8 символов, хотя бы одна цифра и одна буква</div>
-                </div>
-                <button type="submit">Зарегистрироваться</button>
-            </form>
-            <div id="message"></div>
-            <div class="link">
-                <a href="/login-page">Уже есть аккаунт? Войдите</a>
-            </div>
+        <h2>Регистрация</h2>
+        <form id="registerForm">
+            <input type="text" id="username" placeholder="Имя пользователя" required>
+            <div class="small">Минимум 3 символа, только буквы, цифры и _</div>
+            <input type="email" id="email" placeholder="Email" required>
+            <input type="password" id="password" placeholder="Пароль" required>
+            <div class="small">Минимум 8 символов, цифра и буква</div>
+            <button type="submit">Зарегистрироваться</button>
+        </form>
+        <div id="message"></div>
+        <div class="link">
+            <a href="/login-page">Уже есть аккаунт? Войдите</a>
         </div>
         
         <script>
@@ -492,14 +298,8 @@ async def register_page():
                 
                 const response = await fetch('/register', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        username: username,
-                        email: email,
-                        password: password
-                    })
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({username: username, email: email, password: password})
                 });
                 
                 const resultDiv = document.getElementById('message');
@@ -507,10 +307,8 @@ async def register_page():
                 
                 if (response.ok) {
                     resultDiv.className = 'message success';
-                    resultDiv.innerHTML = 'Регистрация успешна! Перенаправление на страницу входа...';
-                    setTimeout(() => {
-                        window.location.href = '/login-page';
-                    }, 2000);
+                    resultDiv.innerHTML = 'Регистрация успешна! Переход на страницу входа...';
+                    setTimeout(() => window.location.href = '/login-page', 2000);
                 } else {
                     const error = await response.json();
                     resultDiv.className = 'message error';
@@ -526,120 +324,57 @@ async def register_page():
 @app.get("/me-page", response_class=HTMLResponse)
 async def me_page():
     html_content = """
-    <!DOCTYPE html>
+  <!DOCTYPE html>
     <html>
     <head>
         <title>Личный кабинет</title>
         <style>
-            body {
-                font-family: Arial, sans-serif;
-                max-width: 600px;
-                margin: 50px auto;
-                padding: 20px;
-                background-color: #f5f5f5;
+            body { font-family: Arial; margin: auto; padding: 20px; max-width: 600px; }
+            .section { margin: 20px 0; padding: 15px; border: 1px solid #ddd; }
+            button { 
+                padding: 8px; 
+                margin: 5px; 
+                background: #4CAF50; 
+                color: white; 
+                border: none; 
             }
-            .container {
-                background-color: white;
-                padding: 30px;
-                border-radius: 10px;
-                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            }
-            h2 {
-                color: #333;
-                text-align: center;
-                margin-bottom: 30px;
-            }
-            .user-info {
-                background-color: #f9f9f9;
-                padding: 20px;
-                border-radius: 5px;
-                margin-bottom: 20px;
-            }
-            .info-item {
-                margin-bottom: 10px;
-                padding: 10px;
-                background-color: white;
-                border-left: 4px solid #4CAF50;
-            }
-            .token-section {
-                margin-top: 20px;
-            }
-            textarea {
-                width: 100%;
-                height: 100px;
-                padding: 10px;
-                border: 1px solid #ddd;
-                border-radius: 5px;
-                font-family: monospace;
-                margin-bottom: 10px;
-            }
-            .buttons {
-                display: flex;
-                gap: 10px;
-                margin-top: 20px;
-            }
-            button {
-                padding: 10px 20px;
-                border: none;
-                border-radius: 5px;
-                cursor: pointer;
-                flex: 1;
-            }
-            .primary-btn {
-                background-color: #4CAF50;
-                color: white;
-            }
-            .secondary-btn {
-                background-color: #f0f0f0;
-                color: #333;
-            }
-            button:hover {
-                opacity: 0.9;
-            }
-            .message {
-                padding: 10px;
-                border-radius: 5px;
-                margin-top: 20px;
-                text-align: center;
-                display: none;
-            }
-            .success {
-                background-color: #d4edda;
-                color: #155724;
-                display: block;
-            }
-            .error {
-                background-color: #f8d7da;
-                color: #721c24;
-                display: block;
-            }
+            .admin-btn { background: #5c7fdf; }
+            textarea { width: 100%; height: 80px; padding: 8px; }
+            .message { margin: 10px 0; padding: 10px; }
+            .success { background: #d4edda; color: #155724; }
+            .error { background: #f8d7da; color: #721c24; }
+            .info { margin: 5px 0; padding: 8px; background: #f0f0f0; }
         </style>
     </head>
     <body>
-        <div class="container">
-            <h2>Личный кабинет</h2>
-            
-            <div class="user-info">
-                <h3>Информация о пользователе:</h3>
-                <div id="userData"></div>
-            </div>
-            
-            <div class="token-section">
-                <h3>Ваш JWT токен:</h3>
-                <textarea id="tokenDisplay" readonly></textarea>
-                <div class="buttons">
-                    <button class="primary-btn" onclick="copyToken()">Скопировать токен</button>
-                    <button class="secondary-btn" onclick="loadUserData()">Обновить данные</button>
-                </div>
-            </div>
-            
-            <div class="buttons">
-                <button class="primary-btn" onclick="goToProducts()">Смотреть товары</button>
-                <button class="secondary-btn" onclick="logout()">Выйти</button>
-            </div>
-            
-            <div id="message"></div>
+        <h2>Личный кабинет</h2>
+        
+        <div class="section">
+            <h3>Информация о пользователе:</h3>
+            <div id="userData"></div>
         </div>
+        
+        <div class="section">
+            <h3>JWT токен:</h3>
+            <textarea id="tokenDisplay" readonly></textarea>
+            <div>
+                <button onclick="copyToken()">Скопировать токен</button>
+                <button onclick="loadUserData()">Обновить данные</button>
+            </div>
+        </div>
+        
+        <div>
+            <button onclick="window.location.href='/'">На главную</button>
+            <button onclick="logout()">Выйти</button>
+            <button id="mainButton" style="display:none;"
+                    onclick="window.location.href='/main'">За покупками</button>
+            <button id="adminButton" class="admin-btn" style="display:none;" 
+                    onclick="window.location.href='/admin-page'">
+                Админ-панель
+            </button>
+        </div>
+        
+        <div id="message"></div>
         
         <script>
             document.addEventListener('DOMContentLoaded', function() {
@@ -648,53 +383,42 @@ async def me_page():
                     document.getElementById('tokenDisplay').value = userToken;
                     loadUserData();
                 } else {
-                    document.getElementById('userData').innerHTML = `
-                        <div class="info-item error">
-                            Токен не найден. Пожалуйста, войдите в систему.
-                        </div>
-                        <br>
-                        <button class="primary-btn" onclick="window.location.href='/login-page'">Войти</button>
-                    `;
+                    document.getElementById('userData').innerHTML = '<div class="error">Токен не найден. Войдите в систему.</div>';
                 }
             });
             
             async function loadUserData() {
                 const token = localStorage.getItem('marketplace_token');
                 if (!token) {
-                    showMessage('Ошибка: токен не найден', 'error');
+                    showMessage('Токен не найден', 'error');
                     return;
                 }
                 
                 try {
                     const response = await fetch('/me', {
-                        headers: {
-                            'Authorization': 'Bearer ' + token
-                        }
+                        headers: {'Authorization': 'Bearer ' + token}
                     });
                     
                     if (response.ok) {
                         const user = await response.json();
                         document.getElementById('userData').innerHTML = `
-                            <div class="info-item">
-                                <strong>ID:</strong> ${user.id}
-                            </div>
-                            <div class="info-item">
-                                <strong>Имя пользователя:</strong> ${user.username}
-                            </div>
-                            <div class="info-item">
-                                <strong>Email:</strong> ${user.email}
-                            </div>
+                            <div class="info">ID: ${user.id}</div>
+                            <div class="info">Имя: ${user.username}</div>
+                            <div class="info">Email: ${user.email}</div>
+                            <div class="info">Админ: ${user.is_admin ? 'Да' : 'Нет'}</div>
                         `;
+                        document.getElementById('mainButton').style.display = 'inline-block';
                         showMessage('Данные обновлены', 'success');
+                        if (user.is_admin) {
+                            document.getElementById('adminButton').style.display = 'inline-block';
+                        }
                     } else {
                         const error = await response.json();
                         showMessage('Ошибка: ' + error.detail, 'error');
                         
                         if (response.status === 401) {
                             localStorage.removeItem('marketplace_token');
-                            setTimeout(() => {
-                                window.location.href = '/login-page';
-                            }, 2000);
+                            setTimeout(() => window.location.href = '/login-page', 2000);
                         }
                     }
                 } catch (error) {
@@ -705,9 +429,8 @@ async def me_page():
             function copyToken() {
                 const token = document.getElementById('tokenDisplay').value;
                 if (token) {
-                    navigator.clipboard.writeText(token).then(() => {
-                        showMessage('Токен скопирован в буфер обмена!', 'success');
-                    });
+                    navigator.clipboard.writeText(token);
+                    showMessage('Токен скопирован!', 'success');
                 }
             }
             
@@ -715,13 +438,7 @@ async def me_page():
                 const messageDiv = document.getElementById('message');
                 messageDiv.textContent = text;
                 messageDiv.className = 'message ' + type;
-                setTimeout(() => {
-                    messageDiv.className = 'message';
-                }, 3000);
-            }
-            
-            function goToProducts() {
-                window.location.href = '/products';
+                setTimeout(() => messageDiv.className = 'message', 3000);
             }
             
             function logout() {

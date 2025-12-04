@@ -9,6 +9,7 @@ class UserCreate(UserBase):
 
 class UserRead(UserBase):
     id: int
+    is_admin: bool
 
     class Config:
         from_attributes = True

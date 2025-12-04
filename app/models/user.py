@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String
+from sqlalchemy import Column, Integer, String, Boolean
 from app.database import Base
 
 class User(Base):
@@ -8,3 +8,4 @@ class User(Base):
     username = Column(String, unique=True, nullable=False, index=True)
     email = Column(String, unique=True, nullable=False, index=True)
     hashed_password = Column(String, nullable=False)
+    is_admin = Column(Boolean, default=False)
