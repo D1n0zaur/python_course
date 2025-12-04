@@ -3,7 +3,6 @@ from typing import List
 from datetime import datetime
 
 class OrderBase(BaseModel):
-    user_id: int
     seller_id: int
     total: float
 
@@ -12,6 +11,7 @@ class OrderCreate(OrderBase):
 
 class OrderRead(OrderBase):
     id: int
+    user_id: int
     created_at: datetime
     order_items: List['OrderItemRead'] = []
 

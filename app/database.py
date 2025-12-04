@@ -8,11 +8,11 @@ AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 Base = declarative_base()
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
-        async with AsyncSessionLocal() as session:
-            try:
-              yield session
-            finally:
-                await session.close()
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+        finally:
+            await session.close()
 
 async def create_tables():
     async with engine.begin() as conn:
