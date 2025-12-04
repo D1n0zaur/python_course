@@ -429,6 +429,31 @@ async def create_seller(
     
     return seller
 
+@app.delete("/sellers/{sellers_id}",
+            status_code=status.HTTP_204_NO_CONTENT,
+            summary="Удалить продавца",
+            description="Удаление продавца. Требуются права администратора.")
+async def delete_seller(
+    seller_id: int,
+    db: AsyncSession = Depends(get_session),
+    admin_data: dict = Depends(get_current_admin)
+):
+    result = await db.execute(
+        select(Seller).where(Seller.id == seller_id)
+    )
+    seller = result.scalar_one_or_none()
+    
+    if seller is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Продавец не найден"
+        )
+    
+    await db.delete(seller)
+    await db.commit()
+    
+    return None
+
 # ORDER 
 
 
