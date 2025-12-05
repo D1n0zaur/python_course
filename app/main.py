@@ -6,10 +6,10 @@ from contextlib import asynccontextmanager
 from typing import List, Optional
 
 from app.database import get_session, create_tables, AsyncSessionLocal
-from app.models import User, Product, Seller, Order, OrderItem
+from app.models import User, Product, Seller, Order
 from app.schemas import (
     UserCreate, UserRead, ProductCreate, ProductRead, ProductUpdate,
-    SellerCreate, SellerRead, OrderCreate, OrderRead, OrderItemCreate
+    SellerCreate, SellerRead, OrderCreate, OrderRead
 )
 from app.security import get_password_hash, verify_password
 from app.jwt_manager import jwt_manager
@@ -454,8 +454,125 @@ async def delete_seller(
     
     return None
 
-# ORDER 
+# ORDER
 
+@app.get("/orders", response_model=List[OrderRead],
+         summary="Получить список заказов",
+         description="Возвращает список всех заказов (Требуются права администратора)")
+async def get_orders(
+    skip: int = 0,
+    limit: int = 100,
+    db: AsyncSession = Depends(get_session),
+    admin_data: dict = Depends(get_current_admin)
+):
+    result = await db.execute(
+        select(Order).offset(skip).limit(limit)
+    )
+    orders = result.scalars().all()
+    return orders
+
+@app.get("/orders/{order_id}", response_model=OrderRead,
+         summary="Получить заказ по id",
+         description="Возвращает конкретный заказ по id (Требуются права администратора)"
+         )
+async def get_order(
+    order_id: int,
+    db: AsyncSession = Depends(get_session),
+    admin_data: dict = Depends(get_current_admin)
+):
+    result = await db.execute(
+        select(Order).where(Order.id == order_id)
+    )
+    order = result.scalar_one_or_none()
+
+    if order is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Заказ не найден"
+        )
+
+    return order
+
+@app.post("/orders", response_model=OrderRead,
+          summary="Создать заказ",
+          description="Создаёт новый заказ")
+async def create_order(
+    order_data: OrderCreate,
+    db: AsyncSession = Depends(get_session),
+    current_user_id: int = Depends(get_current_user)
+):
+    result = await db.execute(
+        select(Product).where(Product.id == order_data.product_id)
+    )
+    product = result.scalar_one_or_none()
+    
+    if product is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Указанный продукт не существует"
+        )
+    
+    if order_data.count <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Число должно быть больше 0"
+        )
+    
+    order = Order(
+        user_id=current_user_id,
+        product_id=order_data.product_id,
+        count=order_data.count       
+    )
+    
+    db.add(order)
+    await db.commit()
+    await db.refresh(order)
+    
+    return order
+
+@app.get("/my-orders", response_model=List[OrderRead],
+         summary="Получить мои заказы",
+         description="Возвращает список заказов текущего пользователя")
+async def get_my_orders(
+    skip: int = 0,
+    limit: int = 100,
+    db: AsyncSession = Depends(get_session),
+    current_user_id: int = Depends(get_current_user)
+):
+    result = await db.execute(
+        select(Order).where(Order.user_id == current_user_id).offset(skip).limit(limit)
+    )
+    orders = result.scalars().all()
+    return orders
+
+@app.delete("/orders/{order_id}",
+            status_code=status.HTTP_204_NO_CONTENT,
+            summary="Удалить заказ",
+            description="Удаление заказа текущего пользователя")
+async def delete_order(
+    order_id: int,
+    db: AsyncSession = Depends(get_session),
+    current_user_id: int = Depends(get_current_user)
+):
+    result = await db.execute(
+        select(Order).where(
+            Order.id == order_id,
+            Order.user_id == current_user_id
+        )
+    )
+    order = result.scalar_one_or_none()
+    
+    if order is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Заказ не найден или нет доступа"
+        )
+    
+    await db.delete(order)
+    await db.commit()
+    
+    return None
+    
 
 
 # ВЕБ-СТРАНИЦЫ

@@ -8,10 +8,8 @@ class Order(Base):
 
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    seller_id = Column(Integer, ForeignKey("sellers.id"), nullable=False)
-    total = Column(Float, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
+    count = Column(Integer, nullable=False)
 
     user = relationship("User")
-    seller = relationship("Seller")
-    order_items = relationship("OrderItem", back_populates="order")
+    product = relationship("Product")
